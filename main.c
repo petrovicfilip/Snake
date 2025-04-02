@@ -7,10 +7,12 @@
 #define ROWS 21
 #define COLS 31
 
+bool occupied_grid_blocks[ROWS * COLS];
+       
 typedef struct
 {
     Uint32 value;
-} Cookie;
+} Fruit;
 
 typedef struct SnakePart SnakePart;
 struct SnakePart
@@ -19,37 +21,50 @@ struct SnakePart
     SDL_Color* color;
     Uint32 i; // vrsta, y koordinata / BLOCK_SIZE
     Uint32 j; // kolona, x koordinata / BLOCK_SIZE
+    bool is_even;
 }; 
 
 typedef struct 
 {
-    Cookie* cookie;
+    bool fruit;
     SDL_FRect* rect;
-    SnakePart* snake_part_on_me; //ce mi treba najverovatnije...
+    SnakePart* snake_part_on_me;
 
 } GridBlock;
 
 void drawBlock(SDL_Renderer* renderer, GridBlock* block)
 {
     //#9BBA5A
-    if(block->snake_part_on_me == NULL)
+    if(block->snake_part_on_me == NULL && !block->fruit)
     {
         SDL_SetRenderDrawColor(renderer, 0x9b, 0xba, 0x5A, 0xFF);
         SDL_RenderFillRect(renderer, block->rect);
     }
+    else if(block->fruit)
+    {
+        SDL_SetRenderDrawColor(renderer, 255, 215, 0, 0xFF);
+        SDL_RenderFillRect(renderer, block->rect);
+    }
     else
     {
-        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 0xFF);
-        SDL_RenderFillRect(renderer, block->rect); 
+        if(block->snake_part_on_me->is_even)
+        {
+            SDL_SetRenderDrawColor(renderer, 255, 0, 0, 0xFF);
+            SDL_RenderFillRect(renderer, block->rect);
+        }
+        // sarena zmijica...
+        else
+        {
+            SDL_SetRenderDrawColor(renderer, 255, 127, 80, 0xFF);
+            SDL_RenderFillRect(renderer, block->rect);
+        }
     }
-    //SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    //SDL_RenderRect(renderer, block->rect);
 }
 
 GridBlock* allocBlock(int i, int j)
 {
     GridBlock* block = (GridBlock*)malloc(sizeof(GridBlock));
-    block->cookie = NULL;
+    block->fruit = false;
     block->snake_part_on_me = NULL;
     block->rect = (SDL_FRect*)malloc(sizeof(SDL_FRect));
     block->rect->h = BLOCK_SIZE;
@@ -64,6 +79,9 @@ SnakePart* makeSnake(GridBlock*** grid)
     SnakePart* head = (SnakePart*)malloc(sizeof(SnakePart));
     SnakePart* body_p1 = (SnakePart*)malloc(sizeof(SnakePart));
     SnakePart* body_p2 = (SnakePart*)malloc(sizeof(SnakePart));
+    head->is_even = true;
+    body_p1->is_even = false;
+    body_p2->is_even = true;
     head->next_part = body_p1;
     body_p1->next_part = body_p2;
     body_p2->next_part = NULL;
@@ -71,6 +89,7 @@ SnakePart* makeSnake(GridBlock*** grid)
     body_p1->i = 2;
     body_p2->i = 1;
     head->j = body_p1->j = body_p2->j = COLS / 2;
+    occupied_grid_blocks[3 * COLS + COLS / 2] = occupied_grid_blocks[2 * COLS + COLS / 2] = occupied_grid_blocks[COLS + COLS / 2] = true; 
 
     grid[3][COLS / 2]->snake_part_on_me = head;
     grid[2][COLS / 2]->snake_part_on_me = body_p1;
@@ -100,11 +119,11 @@ void drawGrid(SDL_Renderer* renderer, GridBlock*** grid)
     SDL_RenderRect(renderer, &rect);    
 }
 
-bool updateSnakePosition(SnakePart* head, GridBlock*** grid, Uint32 input)
+void updateSnakePosition(bool* out_arr, SnakePart* head, GridBlock*** grid, Uint32 input, bool grow)
 {
     SnakePart* current = head;
     bool killed = false;
-    int i, j = 0;
+    Uint32 i, j = 0;
     switch (input) 
         {
             case SDLK_UP:
@@ -122,19 +141,35 @@ bool updateSnakePosition(SnakePart* head, GridBlock*** grid, Uint32 input)
             case SDLK_RIGHT:
                 i = head->i;
                 j = head->j + 1;
-            default:
-                printf("Nepoznata opcija!\n");
         }
     Uint32 next_new_i, next_new_j = 0;
+    Uint32 head_i = i;
+    Uint32 head_j = j;
+    if (i >= 0 && i < ROWS && j >= 0 && j < COLS)
+    {
+        out_arr[1] = grid[i][j]->fruit ? true : false;
+        grid[i][j]->fruit = false;
+    }
+    else
+    {
+        out_arr[0] = true;
+        out_arr[1] = false;
+        return;
+    }
+    SnakePart* bef = NULL;
     while (current != NULL)
     {
-        if (i >= 0 && i < ROWS && j >= 0 && j < COLS)
-        {
-            grid[current->i][current->j]->snake_part_on_me = NULL;
+        grid[current->i][current->j]->snake_part_on_me = NULL;
+        if(grid[i][j]->snake_part_on_me == NULL)
             grid[i][j]->snake_part_on_me = current;
-        }
-        else
+        else if (current == head)
+        {
             killed = true;
+            break;
+        }
+
+        occupied_grid_blocks[current->i * COLS + current->j] = false;
+        occupied_grid_blocks[i * COLS + j] = true;
 
         next_new_i = current->i;
         next_new_j = current->j;
@@ -144,23 +179,97 @@ bool updateSnakePosition(SnakePart* head, GridBlock*** grid, Uint32 input)
 
         i = next_new_i;
         j = next_new_j;
-
+        
+        bef = current;
         current = current->next_part;
     }
-    return killed;
+    if (grow)
+    {
+        SnakePart* new_part = (SnakePart*)malloc(sizeof(SnakePart));
+        bef->next_part = new_part;
+        new_part->i = next_new_i;
+        new_part->j = next_new_j;
+        new_part->next_part = NULL;
+        new_part->is_even = !bef->is_even;
+        occupied_grid_blocks[next_new_i * COLS + next_new_j] = true;
+    }
+    out_arr[0] = killed;
+    //if(grid[i][j]->fruit)
+       // eatFruit(headptr);
+}
+
+void destroySnake(SDL_Renderer* renderer, SnakePart* head, GridBlock*** grid, int fps)
+{
+    SnakePart* current = head;
+    Uint32 wanted_frame_time = 1000 / fps;
+    Uint32 beg_of_frame;
+    Uint32 frame_time;
+    while (current != NULL)
+    {
+        beg_of_frame = SDL_GetTicks();
+        grid[current->i][current->j]->snake_part_on_me = NULL;
+        drawGrid(renderer, grid);
+
+        SDL_RenderPresent(renderer);
+        SDL_RenderClear(renderer);
+
+        current = current->next_part;
+
+        frame_time = SDL_GetTicks() - beg_of_frame;
+        if (frame_time < wanted_frame_time)
+            SDL_Delay(wanted_frame_time - frame_time);
+    }
+}
+
+// first-fit ako ne nadje iz prve
+void placeFruit(GridBlock*** grid)
+{
+    srand(time(NULL));
+    int len = ROWS * COLS;
+    long long rand1 = rand();
+    srand(time(NULL));
+    long long rand2 = rand();
+    // printa za rand2 da je nula a nije najjaca forica, al radi ok...
+    int random = (rand1 * rand2) % len;
+    printf("random = %d \n", random);
+    int row = random / COLS;
+    int col = random % COLS;
+    if (!occupied_grid_blocks[random])
+        grid[row][col]->fruit = true;
+    else
+    {
+        int counter = random + 1;
+        bool found = false;
+        while(counter != random && !found)
+        {
+            if (!occupied_grid_blocks[counter])
+            {
+                int row = counter / COLS;
+                int col = counter % COLS;
+                grid[row][col]->fruit = true;
+                found = true;
+            }
+            counter = (counter + 1) % len;
+        }
+    }
 }
 
 int main(int argc, char** argv)
 {
     srand(time(NULL));
+    int r1 = rand();
+    int r2 = rand();
+    printf("%d, %d", r1, r2);
     if(!SDL_Init(SDL_INIT_VIDEO))
         printf("Neuspesna inicijalizacija SDL video moda.");
+    int len = ROWS * COLS;
+    for (int i = 0; i < len; i++)
+        occupied_grid_blocks[i] = false; 
 
-    SDL_Window* window = SDL_CreateWindow("Snake game", BLOCK_SIZE * COLS, BLOCK_SIZE * ROWS, SDL_WINDOW_RESIZABLE);
+    SDL_Window* window = SDL_CreateWindow("Snake game", BLOCK_SIZE * COLS, BLOCK_SIZE * ROWS + 50, SDL_WINDOW_RESIZABLE);
     SDL_SetWindowResizable(window, false);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, NULL);
     SDL_Event event;
-    printf("ulazim  u allocgrid");
     GridBlock*** grid = allocGrid();
     SnakePart* snake_head = makeSnake(grid);
     SnakePart* snake_tail = snake_head->next_part->next_part;
@@ -176,6 +285,8 @@ int main(int argc, char** argv)
     Uint32 frame_time;
     bool running = true;
     bool killed = false;
+    bool grow = false;
+    placeFruit(grid);
     while(running && !killed)
     {
         beg_of_frame = SDL_GetTicks();
@@ -186,31 +297,42 @@ int main(int argc, char** argv)
             switch (event.key.key) 
             {
                 case SDLK_UP:
-                    last_arrow_input = SDLK_UP;
+                    if(last_arrow_input != SDLK_DOWN)
+                        last_arrow_input = SDLK_UP;
                     break;
                 case SDLK_DOWN:
-                    last_arrow_input = SDLK_DOWN;
+                    if(last_arrow_input != SDLK_UP)
+                        last_arrow_input = SDLK_DOWN;
                     break;
                 case SDLK_LEFT:
-                    last_arrow_input = SDLK_LEFT;
+                    if(last_arrow_input != SDLK_RIGHT)
+                        last_arrow_input = SDLK_LEFT;
                     break;
                 case SDLK_RIGHT:
-                    last_arrow_input = SDLK_RIGHT; 
-                default:
-                    printf("Nepoznata opcija!\n");
+                    if(last_arrow_input != SDLK_LEFT)
+                        last_arrow_input = SDLK_RIGHT; 
             }
         }
-        killed = updateSnakePosition(snake_head, grid, last_arrow_input);
-        drawGrid(renderer, grid);
+        bool outarr[2];
+        updateSnakePosition(outarr, snake_head, grid, last_arrow_input, grow);
+        killed = outarr[0];
+        if (killed)
+            break;
+        grow = outarr[1];
+        if (grow)
+            placeFruit(grid);
         
-        frame_time = SDL_GetTicks() - beg_of_frame; 
-        if(frame_time < wanted_frame_time)
-            SDL_Delay(wanted_frame_time - frame_time);
+        drawGrid(renderer, grid);
 
         SDL_RenderPresent(renderer);
         SDL_RenderClear(renderer);
 
+        frame_time = SDL_GetTicks() - beg_of_frame; 
+        if(frame_time < wanted_frame_time)
+            SDL_Delay(wanted_frame_time - frame_time);
     }
+    if (killed)
+        destroySnake(renderer, snake_head, grid, fps);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
