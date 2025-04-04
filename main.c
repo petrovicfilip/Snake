@@ -5,7 +5,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <SDL3_ttf/SDL_textengine.h>
 
-#define BLOCK_SIZE 20
+#define BLOCK_SIZE 30
 #define ROWS 21
 #define COLS 31
 #define BASE_TIME_BONUS 15
@@ -21,7 +21,6 @@ typedef struct SnakePart SnakePart;
 struct SnakePart
 {
     SnakePart* next_part;
-    SDL_Color* color;
     Uint32 i; // vrsta, y koordinata / BLOCK_SIZE
     Uint32 j; // kolona, x koordinata / BLOCK_SIZE
     bool is_even;
@@ -56,7 +55,9 @@ void* makeOrOpenHighscoreFile()
         file = fopen("snake.bin", "w+b");
         if(file == NULL)
             return NULL;
-        fwrite(xor_cypher(highscore, key), sizeof(char), 19, file);
+        char* cypher = xor_cypher(highscore, key);
+        fwrite(cypher, sizeof(char), 19, file);
+        free(cypher);
         int zero = 0;
         fwrite(&zero, sizeof(int), 1, file);
         fseek(file, 0, SEEK_SET);
@@ -68,16 +69,20 @@ void* makeOrOpenHighscoreFile()
         char* label = (char*)malloc(len + 1);
         fread(label, sizeof(char), 19, file);
         label[19] = '\0';
-        if(strcmp(xor_cypher(label, key), highscore) == 0)
+        char* cypher = xor_cypher(label, key);
+        if(strcmp(cypher, highscore) == 0)
         {
             fseek(file, 0, SEEK_SET);
+            free(cypher);
             return file;
         }
         fclose(file);
         FILE* file = fopen("snake.bin", "w+b");
         if(file == NULL)
             return NULL;
-        fwrite(xor_cypher(highscore, key), sizeof(char), 19, file);
+        cypher = xor_cypher(highscore, key);
+        fwrite(cypher, sizeof(char), 19, file);
+        free(cypher);
         int zero = 0;
         fwrite(&zero, sizeof(int), 1, file);
         fseek(file, 0, SEEK_SET);
@@ -112,6 +117,23 @@ void updateHighscore(FILE* file, int new_hs)
     fseek(file, 0, SEEK_SET);
 }
 
+void fillCircle(SDL_Renderer* renderer, int radius, int x_offset, int y_offset)
+{
+    for (int i = -radius; i < radius; i++)
+        for (int j = -radius; j < radius; j++)
+            if (i * i + j * j < radius * radius)
+                SDL_RenderPoint(renderer, j + x_offset, i + y_offset);
+}
+
+void outlineCircle(SDL_Renderer* renderer, int radius, int x_offset, int y_offset)
+{
+    for (int i = -radius; i < radius; i++)
+        for (int j = -radius; j < radius; j++)
+        // pixeli su kvadratici pa ga malo tweakujemo, sta da se radi...
+            if (i * i + j * j >= radius * radius - 25 && i * i + j * j <= radius * radius + 30)
+                SDL_RenderPoint(renderer, j + x_offset, i + y_offset);
+}
+
 void drawBlock(SDL_Renderer* renderer, GridBlock* block)
 {
     //#9BBA5A
@@ -122,8 +144,13 @@ void drawBlock(SDL_Renderer* renderer, GridBlock* block)
     }
     else if(block->fruit)
     {
-        SDL_SetRenderDrawColor(renderer, 255, 215, 0, 0xFF);
+        SDL_SetRenderDrawColor(renderer, 0x9b, 0xba, 0x5A, 0xFF);
         SDL_RenderFillRect(renderer, block->rect);
+
+        SDL_SetRenderDrawColor(renderer, 255, 215, 0, 0xFF);
+        fillCircle(renderer, BLOCK_SIZE / 2, block->rect->x + BLOCK_SIZE / 2, block->rect->y + BLOCK_SIZE / 2);
+        SDL_SetRenderDrawColor(renderer, 128, 0, 0, 255);
+        outlineCircle(renderer, BLOCK_SIZE / 2, block->rect->x + BLOCK_SIZE / 2, block->rect->y + BLOCK_SIZE / 2);
     }
     else
     {
@@ -177,6 +204,16 @@ SnakePart* makeSnake(GridBlock*** grid)
     return head;
 }
 
+void deleteSnake(SnakePart* head)
+{
+    SnakePart* current = head;
+    while (current)
+    {
+        free(current);
+        current = current->next_part;
+    }
+}
+
 GridBlock*** allocGrid()
 {
     GridBlock*** grid = (GridBlock***)malloc(sizeof(GridBlock**) * ROWS);
@@ -207,6 +244,17 @@ void drawGrid(SDL_Renderer* renderer, GridBlock*** grid)
     SDL_FRect rect;
     SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
     SDL_RenderRect(renderer, &rect);    
+}
+
+void deleteGrid(GridBlock*** grid)
+{
+    for (int i = 0; i < ROWS; i++)
+    {
+        for (int j = 0; j < COLS; j++)     
+            free(grid[i][j]->rect);
+        free(grid[i]);
+    }
+    free(grid);
 }
 
 void updateSnakePosition(bool* out_arr, SnakePart* head, GridBlock*** grid, Uint32 input, bool grow)
@@ -300,7 +348,7 @@ void addPoints(Uint64 time_of_last_eaten, Uint64 time_of_before_last_eaten,  lon
     }
 }
 
-void destroySnake(SDL_Renderer* renderer, SnakePart* head, GridBlock*** grid, int fps)
+void killSnake(SDL_Renderer* renderer, SnakePart* head, GridBlock*** grid, int fps)
 {
     SnakePart* current = head;
     Uint64 wanted_frame_time = (Uint64) 1000 / fps;
@@ -368,7 +416,7 @@ int main(int argc, char** argv)
     for (int i = 0; i < len; i++)
         occupied_grid_blocks[i] = false; 
 
-    SDL_Window* window = SDL_CreateWindow("Snake game", BLOCK_SIZE * COLS, BLOCK_SIZE * ROWS + 100, SDL_WINDOW_RESIZABLE);
+    SDL_Window* window = SDL_CreateWindow("Snake game", BLOCK_SIZE * COLS, BLOCK_SIZE * ROWS, SDL_WINDOW_RESIZABLE);
     SDL_SetWindowResizable(window, false);
     SDL_Renderer* renderer = SDL_CreateRenderer(window, NULL);
     SDL_Event event;
@@ -452,7 +500,7 @@ int main(int argc, char** argv)
                     printf("Novi rekord! -> %d\n", readHighscore(file));
                     hs = points;
                 }
-            destroySnake(renderer, snake_head, grid, 30);
+            killSnake(renderer, snake_head, grid, 30);
         }
         bool restart = false;
         while(!restart && running)
@@ -463,11 +511,18 @@ int main(int argc, char** argv)
                     || event.type == SDL_EVENT_QUIT)
                     running = false;
                 else if (event.key.key == SDLK_R)
+                {   
+                    time_bonus = BASE_TIME_BONUS;
+                    system("cls"); 
                     restart = true;
+                }
             }   
         }
+        deleteSnake(snake_head);
     }
     fclose(file);
+    deleteGrid(grid);
+    
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
