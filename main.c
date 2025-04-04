@@ -50,7 +50,7 @@ char* xor_cypher(char* text, char* key)
 
 void* makeOrOpenHighscoreFile()
 {
-    FILE* file = fopen("snake.bin", "rb");
+    FILE* file = fopen("snake.bin", "r+b");
     if (file == NULL)
     {
         file = fopen("snake.bin", "w+b");
